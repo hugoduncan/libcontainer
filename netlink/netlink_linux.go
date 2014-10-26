@@ -85,6 +85,7 @@ func newIfInfomsg(family int) *IfInfomsg {
 	return &IfInfomsg{
 		IfInfomsg: syscall.IfInfomsg{
 			Family: uint8(family),
+			Change: DEFAULT_CHANGE,
 		},
 	}
 }
@@ -457,6 +458,30 @@ func NetworkLinkDel(name string) error {
 	return s.HandleAck(wb.Seq)
 }
 
+// ifaceFlags returns IFF Flags for a given net.Interface.
+// This is necessary as the constants in net.Interface.Flags don't
+// match the IFF constants.
+func ifaceFlags(iface *net.Interface) uint32 {
+	// iface.Flags&0x3 | (iface.Flags & ^0x3)<<1
+	r := uint32(0)
+	if iface.Flags&net.FlagUp != 0 {
+		r |= syscall.IFF_UP
+	}
+	if iface.Flags&net.FlagBroadcast != 0 {
+		r |= syscall.IFF_BROADCAST
+	}
+	if iface.Flags&net.FlagLoopback != 0 {
+		r |= syscall.IFF_LOOPBACK
+	}
+	if iface.Flags&net.FlagPointToPoint != 0 {
+		r |= syscall.IFF_POINTOPOINT
+	}
+	if iface.Flags&net.FlagMulticast != 0 {
+		r |= syscall.IFF_MULTICAST
+	}
+	return r
+}
+
 // Bring up a particular network interface.
 // This is identical to running: ip link set dev $name up
 func NetworkLinkUp(iface *net.Interface) error {
@@ -470,8 +495,7 @@ func NetworkLinkUp(iface *net.Interface) error {
 
 	msg := newIfInfomsg(syscall.AF_UNSPEC)
 	msg.Index = int32(iface.Index)
-	msg.Flags = syscall.IFF_UP
-	msg.Change = syscall.IFF_UP
+	msg.Flags = ifaceFlags(iface) | syscall.IFF_UP
 	wb.AddData(msg)
 
 	if err := s.Send(wb); err != nil {
@@ -494,8 +518,7 @@ func NetworkLinkDown(iface *net.Interface) error {
 
 	msg := newIfInfomsg(syscall.AF_UNSPEC)
 	msg.Index = int32(iface.Index)
-	msg.Flags = 0 & ^syscall.IFF_UP
-	msg.Change = DEFAULT_CHANGE
+	msg.Flags = ifaceFlags(iface) & ^uint32(syscall.IFF_UP)
 	wb.AddData(msg)
 
 	if err := s.Send(wb); err != nil {
@@ -532,7 +555,7 @@ func NetworkSetMacAddress(iface *net.Interface, macaddr string) error {
 
 	msg := newIfInfomsg(syscall.AF_UNSPEC)
 	msg.Index = int32(iface.Index)
-	msg.Change = DEFAULT_CHANGE
+	msg.Flags = ifaceFlags(iface)
 	wb.AddData(msg)
 
 	macdata := make([]byte, 6)
@@ -562,10 +585,8 @@ func NetworkSetMTU(iface *net.Interface, mtu int) error {
 	wb := newNetlinkRequest(syscall.RTM_SETLINK, syscall.NLM_F_ACK)
 
 	msg := newIfInfomsg(syscall.AF_UNSPEC)
-	msg.Type = syscall.RTM_SETLINK
-	msg.Flags = syscall.NLM_F_REQUEST
+	msg.Flags = ifaceFlags(iface)
 	msg.Index = int32(iface.Index)
-	msg.Change = DEFAULT_CHANGE
 	wb.AddData(msg)
 	wb.AddData(uint32Attr(syscall.IFLA_MTU, uint32(mtu)))
 
@@ -585,10 +606,8 @@ func networkMasterAction(iface *net.Interface, rtattr *RtAttr) error {
 	wb := newNetlinkRequest(syscall.RTM_SETLINK, syscall.NLM_F_ACK)
 
 	msg := newIfInfomsg(syscall.AF_UNSPEC)
-	msg.Type = syscall.RTM_SETLINK
-	msg.Flags = syscall.NLM_F_REQUEST
+	msg.Flags = ifaceFlags(iface)
 	msg.Index = int32(iface.Index)
-	msg.Change = DEFAULT_CHANGE
 	wb.AddData(msg)
 	wb.AddData(rtattr)
 
@@ -666,7 +685,7 @@ func NetworkChangeName(iface *net.Interface, newName string) error {
 
 	msg := newIfInfomsg(syscall.AF_UNSPEC)
 	msg.Index = int32(iface.Index)
-	msg.Change = DEFAULT_CHANGE
+	msg.Flags = ifaceFlags(iface)
 	wb.AddData(msg)
 
 	nameData := newRtAttr(syscall.IFLA_IFNAME, zeroTerminated(newName))
